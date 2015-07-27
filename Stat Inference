@@ -1,0 +1,137 @@
+rm(list=ls())  
+
+library(quantmod)
+library(lattice)
+library(sn)
+library(nor1mix)
+library(MASS)
+
+####################################################################
+# Fitting Univariate Models to Data
+####################################################################
+# Download Data
+getSymbols("TB3MS",src="FRED")
+tb3 <- TB3MS["1960::2008"]
+
+png(file="TB3MS.png",width=9,height=5,units="in",res=300)
+p1 <- xyplot(tb3,data=tb3,main="T-Bill Rate",xlab="",ylab="Annualized Rate")
+p2 <- densityplot(as.numeric(tb3),bw="SJ",main="Kernel Density Estimation",xlab="Rate",ylab="Density")
+print(p1,position=c(0,0,0.5,1),more=TRUE)
+print(p2,position=c(0.50,0,1,1))
+dev.off()
+
+# Fit Skew-t distribution
+x <- sort(as.numeric(tb3))
+LL.dst <- function(theta,x) {
+  f <- -sum(log(dst(x,theta[1],theta[2],theta[3],theta[4])))
+}
+
+start <- c(mean(x),sd(x),2.5,10)
+lower <- c(mean(x)-sd(x),sd(x)/10,1,0.5)
+fit.skt <- optim(start,LL.dst,x=x,method="L-BFGS-B",lower=lower)
+
+# Fit Normal Mixture
+LL.nm <- function(beta,x) {
+  nm <- norMix(mu=c(beta[1],beta[3]),sig2=c(beta[2]^2,beta[4]^2),w=c(beta[5],1-beta[5]))
+  f <- dnorMix(x,nm)
+  return(-sum(log(f)))
+}
+
+sd1 <- 0.9*sd(x)
+sd2 <- 1.1*sd(x)
+start <- c(mean(x),sd1,1.5*mean(x),sd2,1)
+lower <- c(mean(x)-sd(x),sd(x)/10,mean(x)-sd(x),0,0.5)
+upper <- c(mean(x)+sd(x),2*sd(x),3*mean(x),100*sd(x),1)
+fit.nm <- optim(start,LL.nm,x=x,method="L-BFGS-B",gr=NULL,lower=lower,upper=upper)
+nm <- norMix(mu=c(fit.nm$par[1],fit.nm$par[3]),sig2=c(fit.nm$par[2]^2,fit.nm$par[4]^2),w=c(fit.nm$par[5],1-fit.nm$par[5]))
+
+# Compare Results Graphically
+png(file="univarcomp.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+plot(0,0,xlim=c(-5,20),ylim=c(0,0.235),main="T-Bill Rate Density Estimates",xlab="rate",ylab="Density",pch="")
+lines(density(x,bw="SJ"),lwd=2,col=3)
+curve(dst(x,fit.skt$par[1],fit.skt$par[2],fit.skt$par[3],fit.skt$par[4]),-5,20,add=T,lwd=2,col=2)
+curve(dnorMix(x,nm),-5,20,add=T,lwd=2,col=4,n=1000)
+abline(h=0,col="lightgray")
+rug(tb3,col=6)
+legend("topright",c("skew-t","Mixture","KDE","rug"),lty=1,lwd=2,col=c(2,4,3,6),bty="n")
+plot(0,0,xlim=c(10,20),ylim=c(0,0.05),main="Right Tail Estimates",xlab="rate",ylab="Density")
+lines(density(x,bw="SJ"),lwd=2,col=3)
+curve(dst(x,fit.skt$par[1],fit.skt$par[2],fit.skt$par[3],fit.skt$par[4]),9,20,add=T,lwd=2,col=2)
+curve(dnorMix(x,nm),9,20,add=T,lwd=2,col=4,n=1000)
+abline(h=0,col="lightgray")
+rug(x,lwd=2,col=6,quiet=T)
+legend("topright",c("skew-t","Mixture","KDE","rug"),lty=1,lwd=2,col=c(2,4,3,6),bty="n")
+dev.off()
+
+# AIC and BIC for Univariate Models
+Model <- c("Skew-t","Mixture")
+parms <- c(4,5)
+results <- data.frame(AIC=rep(0,2),BIC=rep(0,2))
+results[1,1] <- (2*fit.skt$value+2*parms[1])
+results[1,2] <- (2*fit.skt$value+log(length(x))*parms[1])
+results[2,1] <- (2*fit.nm$value+2*parms[2])
+results[2,2] <- (2*fit.nm$value+log(length(x))*parms[2])
+
+results <- cbind(results,Model)
+png(file="aicbic.png",width=9,height=5,units="in",res=300)
+q1 <- dotplot(results[,1]~results[,3],data=results,main="AIC",ylab="",cex=2,grid=T)         
+q2 <- dotplot(results[,2]~results[,3],data=results,main="BIC",ylab="",cex=2,grid=T)
+print(q1,position=c(0,0,0.5,1),more=TRUE)
+print(q2,position=c(0.50,0,1,1))
+dev.off()
+
+####################################################################
+# Fitting Multivariate Models to Data
+####################################################################
+# Download Data
+symbols=c("SPY","AGG","GLD","USO")
+getSymbols(symbols,from="2010-01-01",to="2013-12-31",adjust=T)
+etf.close <- do.call(merge,lapply(symbols,function(x) Cl(get(x))))
+etf.lr <- na.omit(diff(log(etf.close)))
+names(etf.lr) <- symbols
+
+# Profile Likelihood for Multivariate t Distribution
+x <- as.matrix(etf.lr)
+xdf <- seq(2,15,0.01)
+LL.df <- function(df,x) {
+  fit.mt <- cov.trob(x,nu=df)
+  sum(log(dmt(x,mean=fit.mt$center,S=fit.mt$cov,df=df)))
+}
+loglik <- sapply(xdf,LL.df,x)
+z1 <- (2*loglik>2*max(loglik)-qchisq(0.95,1))
+
+png(file="profileLike.png",width=7,height=5,units="in",res=300)
+plot(x=xdf,y=loglik,type="l",lwd=2,col=4,xlab="",ylab="",pch="")
+abline(h=(2*max(loglik)-qchisq(0.95,1))/2)
+abline(v=c(min(xdf[z1]),max(xdf[z1])),col=2)
+legend("right",c("loglik","95% CI"),lwd=c(2,1),col=c(4,2),bty="n")
+title(main="Profile likelihood confidence interval for df",xlab="df",ylab="loglik")
+dev.off()
+
+# Fit Multivariate t Distribution
+fit.mt <- optimize(LL.df,c(min(xdf[z1],max(xdf[z1]))),x=x,lower=min(xdf[z1]),upper=max(xdf[z1]),maximum=T)
+mt.df <- round(fit.mt$maximum,0)
+mt <- cov.trob(x,cor=T,nu=mt.df)
+mt.sigma <- (mt.df/(mt.df-2))*mt$cov
+mt.sd <- sqrt(diag(mt.sigma))*100*sqrt(252)
+
+# Fit Multivariate Skew t Distribution
+mskt <- mst.mple(y=x,penalty=NULL,control=list(eval.max=400,iter.max=300))
+
+# AIC and BIC for Multivariate Models
+Model <- c("Multivariate-t","Multi-Skew-t")
+fit.mt <- LL.df(mt.df,x)
+results <- data.frame(AIC=rep(0,2),BIC=rep(0,2))
+results[1,1] <- (-2*fit.mt+2*(4+4*3/2+1+4))
+results[1,2] <- (-2*fit.mt+log(length(x[,1]))*(4+4*3/2+1+4))
+results[2,1] <- (-2*mskt$logL+2*(4+4*3/2+1+4+4))
+results[2,2] <- (-2*mskt$logL+log(length(x[,1]))*(4+4*3/2+1+4+4))
+
+results <- cbind(results,Model)
+png(file="maicbic.png",width=9,height=5,units="in",res=300)
+q1 <- dotplot(results[,1]~results[,3],data=results,main="AIC",ylab="",cex=2,grid=T)
+q2 <- dotplot(results[,2]~results[,3],data=results,main="BIC",ylab="",cex=2,grid=T)
+print(q1,position=c(0,0,0.5,1),more=TRUE)
+print(q2,position=c(0.50,0,1,1))
+dev.off()
