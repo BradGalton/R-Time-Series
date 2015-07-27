@@ -1,0 +1,16 @@
+multiLagBoxTest <- function(x,lags=10,fitdf=0,plotit=T)
+{
+  if( lags <= fitdf ) stop("lags must be greater than fitdf")
+  x <- as.numeric(x)
+  pval <- rep(NA,lags-fitdf)
+  for(i in (fitdf+1):lags)
+  {
+    pval[i-fitdf] <- Box.test(x,lag=i,type="Ljung-Box",fitdf=fitdf)$p.value
+  }
+  if( plotit ) {
+    plot(y=pval,x=(fitdf+1):lags,main="p values of Ljung-Box statistic",ylab="p value",xlab="lag",
+      ylim=c(0,1),pch=18,col=4)
+    abline(h = 0.05, lty = 2, col = 2)
+  }
+  return( invisible(pval) )
+}
