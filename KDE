@@ -1,0 +1,66 @@
+rm(list=ls())  
+
+####################################################################
+KDE Function Specification
+####################################################################
+library(MASS)
+library(quantmod)
+library(lattice)
+
+rectKDE <- function(Y,b=1,xgp=1000) {
+  minx <- min(Y)-b
+  maxx <- max(Y)+b
+  xw <- (maxx-minx)/(xgp-1)
+  x <- seq(minx,maxx,by=xw)
+  center <- sort(Y)
+  w <- 1/(length(Y)*b)
+  kde.mat <- matrix(0,nrow=length(x),ncol=length(Y))
+  for( i in 1:length(x) ) {
+    for( j in 1:length(Y) ) {
+      kde.mat[i,j] <- drect(x[i],center[j],b)*w
+    }
+  }
+  y <- apply(kde.mat,1,sum)
+  kde <- list(x=x,y=y)
+}
+
+# Kernel Function Specification
+drect <- function(x,center,b) {
+  k <- rep(0,length(x))
+  for( i in 1:length(x) ) if(x[i]>=center-b/2 & x[i]<center+b/2) {
+    k[i] <- 1
+  }
+  k
+}
+
+#####################################################################
+# Baseline Testing
+#####################################################################
+
+set.seed("992291")
+x=rnorm(6)
+
+dens <- rectKDE(x,b=0.5,xgp=100)
+names(dens)
+head(dens$x)
+tail(dens$x)
+dens$y[50:60]
+
+png(file="smallKDE.png",width=7,height=5,units="in",res=300)
+plot(dens,type="l",col=4,lwd=3,xlab="x",ylab="density",main="Rectangular Kernel Density Estimate")
+rug(x,col=2,lwd=3)
+dev.off()
+
+#######################################################################
+# Numerical Integration
+#######################################################################
+
+pKDE <- function(q,kde)  {
+  pval <- diff(kde$x)*kde$y[-length(kde$y)]
+  pval <- c(0,pval)
+  a <- which.max(q<kde$x)
+  p1 <- sum(pval[1:(a-1)])
+  p2 <- (q-kde$x[a-1])*kde$y[a-1]
+  p <- (p1+p2)
+  (p)
+}
