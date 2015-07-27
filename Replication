@@ -1,0 +1,34 @@
+rm(list=ls())  
+
+library(corrplot)
+library(leaps)
+library(MASS)
+library(quantmod)
+
+####################################################################
+# Mutual Fund Replication 
+####################################################################
+# Fund and ETF Data
+funds.df <- read.table("fundData.csv",header=T,sep=",")
+funds.df <- funds.df[which(as.Date(funds.df$Index)>"2010-12-30"),]
+funds.df <- cbind(funds.df["AMRMX"],funds.df[,11:18])
+ret.df <- as.data.frame(diff(log(as.matrix(funds.df))))
+
+# Return Correlation
+png(file="returncor.png",width=7,height=7,units="in",res=300)
+corrplot.mixed(cor(ret.df),upper="ellipse")
+dev.off()
+
+# Model Selection
+subsets <- regsubsets(AMRMX~.,data=ret.df,nbest=1)
+(b <- summary(subsets))
+
+png(file="bic.png",width=7,height=5,units="in",res=300)
+plot(b$bic,type="b",main="BIC metric",xlab="number of regressors",ylab="BIC",col=c(4,4,2,4,4,4,4,4),pch=c(1,1,19,1,1,1,1,1))
+dev.off()
+
+# Fit Optimal Model
+mod1 <- lm(AMRMX~IWD,data=ret.df)
+mod1.sum <- summary(mod1)
+mod3 <- lm(AMRMX~IWD+IWF+IWO,data=ret.df)
+mod3.sum <- summary(mod3)
