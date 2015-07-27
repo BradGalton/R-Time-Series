@@ -1,0 +1,81 @@
+rm(list=ls())  
+
+library(quantmod)
+library(lattice)
+library(rugarch)
+library(MASS)
+
+####################################################################
+# GARCH Models for DJIA
+####################################################################
+# Read Data and Compute Log Returns
+djia.z <- read.zoo("djia.csv",header=T,sep=",")
+djia.ts <- xts(djia.z)
+
+png(file="djia.png",width=7,height=5,units="in",res=300)
+plot(xyplot(djia.z,type=c("l","g"),main="Dow Jones Industrial Average",xlab="",scales=list(y=list(log=T,equispaced.log=F))))
+dev.off()
+
+# Subset Data
+djia.ts <- window(djia.ts,start="1915-01-01")
+ret1.ts <- diff(log(djia.ts))
+(ret1.ts[which.min(ret1.ts[,1]),])
+ret2.ts <- window(ret1.ts,start="1985-10-21",end="1987-10-16")
+(head(ret2.ts,1))
+(tail(ret2.ts,1))
+
+# Fit Models
+models <- list("GARCH(1,1)-Normal","GARCH(1,1)-std","APARCH(1,1)-Normal","APARCH(1,1)-std")
+g11.n <- ugarchspec(variance.model=list(garchOrder=c(1,1)),mean.model=list(armaOrder=c(0,0)))
+g11.n.fit <- ugarchfit(g11.n,ret2.ts)
+g11.n.bic <- infocriteria(g11.n.fit)[2]
+g11.t <- ugarchspec(variance.model=list(garchOrder=c(1,1)),mean.model=list(armaOrder=c(0,0)),distribution="std")
+g11.t.fit <- ugarchfit(g11.t,ret2.ts)
+g11.t.bic <- infocriteria(g11.t.fit)[2]
+a11.n <- ugarchspec(variance.model=list(model="apARCH",garchOrder=c(1,1)),mean.model=list(armaOrder=c(0,0)))
+a11.n.fit <- ugarchfit(a11.n,ret2.ts)
+a11.n.bic <- infocriteria(a11.n.fit)[2]
+a11.t <- ugarchspec(variance.model=list(model="apARCH",garchOrder=c(1,1)),mean.model=list(armaOrder=c(0,0)),distribution="std")
+a11.t.fit <- ugarchfit(a11.t,ret2.ts)
+a11.t.bic <- infocriteria(a11.t.fit)[2]
+bic <- c(g11.n.bic,g11.t.bic,a11.n.bic,a11.t.bic)
+
+png(file="dotchart.png",width=7,height=5,units="in",res=300)
+dotchart(bic,models,main="BIC for GARCH Model Specifications",col=4,pch=16)
+dev.off()
+
+# Optimal Model
+png(file="seriesPlusSigma.png",width=7,height=5,units="in",res=300)
+plot(g11.t.fit,which=1)
+dev.off()
+
+####################################################################
+# Forecasting
+####################################################################
+# Compute 30-day Ahead Forecast
+f1 <- ugarchforecast(g11.t.fit,n.ahead=30)
+
+t1 <- qdist("std",p=0.975,mu=0,sigma=1,shape=coef(g11.t.fit)["shape"])
+ub <- f1@forecast$seriesFor+t1*f1@forecast$sigmaFor
+lb <- f1@forecast$seriesFor-t1*f1@forecast$sigmaFor
+
+# Forecast Plot
+ret3.ts <- window(ret1.ts,start="1987-01-02",end="1987-10-19")
+origin1 <- which(index(ret1.ts)=="1987-10-19")
+nahead <- 30
+ub.ts <- xts(ub,order.by=index(ret1.ts)[(origin1):(origin1+nahead-1)])
+lb.ts <- xts(lb,order.by=index(ret1.ts)[(origin1):(origin1+nahead-1)])
+series.ts <- xts(f1@forecast$seriesFor,order.by=index(ret1.ts)[(origin1):(origin1+nahead-1)])
+png(file="forecast.png",width=7,height=5,units="in",res=300)
+comb.ts <- cbind(ret3.ts,ub.ts,lb.ts,series.ts)
+plot.zoo(comb.ts,plot.type=c("single"),type=c("h","l","l","l"),xlab="",ylab="return",col=c(4,2,2,3),lwd=c(1,2,2,1),lty=c(1,1,1,2))
+title(c("DJIA Log Return Forecast on 1987-10-16","plus actual return on 1987-10-19"))
+legend("bottomleft",c("Actual","Mean Forecast","95% Prediction Interval"),lty=c(1,2,1),lwd=c(1,1,2),col=c(4,3,2),bty="n")
+dev.off()
+
+# Recurrence Interval of Black Monday Decline
+f2 <- ugarchforecast(g11.t.fit,n.ahead=1)
+bm <- as.numeric(ret3.ts[length(ret3.ts)])
+p <- pdist("std",bm,mu=as.numeric(f2@forecast$seriesFor),sigma=as.numeric(f2@forecast$sigmaFor),shape=coef(g11.t.fit)["shape"])
+T <- 1/p
+ri <- T/250
