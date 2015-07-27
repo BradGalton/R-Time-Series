@@ -1,0 +1,177 @@
+rm(list=ls())  
+
+library(MASS)
+library(quantmod)
+library(lattice)
+library(tseries)
+library(PerformanceAnalytics)
+library(nor1mix)
+library(sn)
+
+####################################################################
+# Exploratory Data Analysis of Dow 30 Industrials
+####################################################################
+# Read Price and Compute Log Returns
+dow <- read.csv("dowPrices.csv")
+x <- as.Date(dow[,1])
+dow <- xts(dow[,2:31],order.by=x)
+dow.lr <- na.omit(diff(log(dow)))
+
+####################################################################
+# Skewness Function
+####################################################################
+
+skTest <- function(x) {
+  n <- length(x)
+  k <- rep(0,n)
+  for(i in 1:n) {
+    k[i] <- ((x[i]-mean(x))/sd(x))^3    
+  }
+  sk <- (1/n)*sum(k)
+  z.stat <- (sk/(sqrt(6/n)))
+  p.value <- ifelse(z.stat<0,2*pnorm(z.stat),2*(1-pnorm(z.stat)))
+  return(list(sk,z.stat,p.value))
+}
+  
+# Apply Skewness Function
+dow.sk <- list(apply(dow.lr,2,skTest))
+dow.sdf <- do.call(rbind.data.frame,dow.sk[[1]],)
+colnames(dow.sdf) <- c("sk","z.stat","p.value")
+
+# Comparison of Skewness
+dow.sk.sort <- dow.sdf[order(dow.sdf[,2]),]
+png(file="skbarplot.png",width=7,height=5,units="in",res=300)
+par(las=3)
+barplot(dow.sk.sort[,3]*100,main="Two-Tailed P-Value for Skewness Hypothesis Test",ylab="probability",names.arg=rownames(dow.sk.sort),col=4)
+abline(h=5,col=2,lty=2,lwd=3)
+dev.off()
+                   
+# Comparison of Skewed Returns
+dow.stack <- stack(as.data.frame(dow.lr))
+png(file="skdensity.png",width=7,height=7,units="in",res=300)
+plot(densityplot(~values|ind,data=dow.stack,layout=c(1,2),cex=0.5,subset=ind %in% c("IBM","HPQ")))
+dev.off()
+
+####################################################################
+# Kurtosis Function
+####################################################################
+
+ktTest <- function(x) {
+  n <- length(x)
+  ku <- rep(0,n)
+  for(i in 1:n) {
+    ku[i] <- ((x[i]-mean(x))/sd(x))^4-3
+  }
+  kur <- (1/n)*sum(ku)
+  z.stat <- kur/sqrt(24/n)
+  p.value <- 1-pnorm(z.stat)
+  return(list(kur,z.stat,p.value))
+}
+
+# Apply Kurtosis Function
+dow.k <- list(apply(dow.lr,2,ktTest))
+dow.kdf <- do.call(rbind.data.frame,dow.k[[1]])
+colnames(dow.kdf) <- c("kt","z.stat","p.value")
+
+# Comparison of Kurtosis
+dow.k.sort <- dow.kdf[order(dow.kdf[,2]),]
+png(file="ktbarplot.png",width=7,height=5,units="in",res=300)
+par(las=3)
+barplot(dow.k.sort[,3]*100,main="Upper-Tail P-Value for Excess Kurtosis Hypothesis Test",ylab="probability",names.arg=rownames(dow.k.sort),col=4)
+abline(h=5,col=2,lty=2,lwd=3)
+dev.off()
+
+# Comparison of Fattest and Thinnest Tails
+png(file="ktdensity.png",width=7,height=7,units="in",res=300)
+plot(densityplot(~values|ind,data=dow.stack,layout=c(1,2),cex=0.5,subset=ind %in% c("UTX","CSCO")))
+dev.off()
+
+####################################################################
+# Jarque-Bera Test
+####################################################################
+jb.test <- function(x) {
+  n <- length(x)
+  skew <- apply(x,2,skTest)
+  kurt <- apply(x,2,ktTest)
+  JB <- (n*(skew[[1]][[1]]^2))/6+(n*(kurt[[1]][[1]]^2))/24
+  p.value <- pchisq(JB,df=2,lower.tail=F)
+  return(list(JB,p.value))
+}
+
+# Apply Jarque-Bera Function
+dow.jb <- list(lapply(dow.lr,jb.test))
+dow.jbdf <- do.call(rbind.data.frame,dow.jb[[1]])
+colnames(dow.jbdf) <- c("JB","p.value")
+
+# Comparison of Jarque-Bera p-values
+dow.jb.sort <- dow.jbdf[order(dow.jbdf[,1]),]
+png(file="jbbarplot.png",width=7,height=5,units="in",res=300)
+par(las=3)
+barplot(dow.jb.sort[,2]*100,main="P-Value for Jarque-Bera Normality Test",ylab="probability",names.arg=rownames(dow.jb.sort),col=4)
+abline(h=5,col=2,lty=2,lwd=3)
+dev.off()
+
+# Compare Least Normal with Most Normal
+png(file="qqplots.png",width=7,height=7,units="in",res=300)
+par(mfrow=c(2,2))
+chart.QQPlot(dow.lr$UTX,envelope=0.95,line='robust',col=c(4,2),pch=16)
+legend("topleft","UTX",bty="n")
+chart.QQPlot(dow.lr$DIS,envelope=0.95,line='robust',col=c(4,2),pch=16)
+legend("topleft","DIS",bty="n")
+chart.QQPlot(dow.lr$MSFT,envelope=0.95,line='robust',col=c(4,2),pch=16)
+legend("topleft","MSFT",bty="n")
+chart.QQPlot(dow.lr$CSCO,envelope=0.95,line='robust',col=c(4,2),pch=16)
+legend("topleft","CSCO",bty="n")
+dev.off()
+
+####################################################################
+# Heavy Tailed Distributions
+####################################################################
+# Mixture Models
+x <- dow.lr$CSCO
+mu1 <- mean(x)
+sd1 <- sd(x)
+mu2 <- median(x)
+sd2 <- mad(x)
+y <- norMix(x,mu=c(0,0),sig2=c(0.006,0.0001),w=c(0.03,0.97))
+
+####################################################################
+# Lower Tail Plot
+png(file="mixmod.png",width=7,height=5,units="in",res=300)
+curve(dnorm(x,mean=mu1,sd=sd1),-0.13,-0.03,ylim=c(0,1),main="Compare Normals to Normal Mixture",xlab="log return",ylab="Density",col=2)
+lines(density(x,bw="SJ"),col=7)
+lines(y,col=4)
+curve(dnorm(x,mean=mu2,sd=sd2),-0.14,-0.02,add=T,col=3)
+rug(x,col=6,lwd=3,quiet=T)
+legend("topleft",c("normal/mean/sd","normal/median/mad","mixture","KDE","rug"),lty=1,col=c(2,3,4,7,6),bty="n")
+dev.off()
+
+# Probability of Large Losses
+a <- order(x)
+mm.q <- pnorMix(as.numeric(c(x[a[1]],x[a[2]])),y)
+
+####################################################################
+# Skew t Distribution
+dp <- c(0.0021,0.0083,-0.2536,4.5)
+
+####################################################################
+# Lower Tail Plot
+x <- dow.lr$IBM
+
+png(file="skewt.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+plot(0,0,xlim=c(-0.1,-0.05),ylim=c(0,1),main="Skew-t Distribution: left tail",xlab="log return",ylab="Density")
+lines(density(x,bw="SJ"),col=2)
+curve(dst(x,dp=dp),add=T,col=4)
+rug(x,lwd=3,col=6,quiet=T)
+legend("topleft",c("Skew-t","KDE","rug"),lty=1,col=c(4,2,6),bty="n")
+plot(0,0,xlim=c(-0.1,0.06),ylim=c(0,46),main="Skew-t Distribution",xlab="log return",ylab="Density",pch="")
+curve(dst(x,dp=dp),-0.12,0.08,add=T,n=1000,col=4)
+lines(density(x,bw="SJ"),col=2)
+rug(x,lwd=1,col=6)
+legend("topleft",c("Skew-t","KDE","rug"),lty=1,col=c(4,2,6),bty="n")
+dev.off()
+
+# VaR Quantiles
+p <- c(0.001,0.0001)
+VaR <- qst(p,dp=dp)
