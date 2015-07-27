@@ -1,0 +1,145 @@
+rm(list=ls())  
+
+library(quantmod)
+library(PerformanceAnalytics)
+library(sn)
+library(boot)
+library(lattice)
+library(copula)
+
+####################################################################
+# Exploratory Data Analysis
+####################################################################
+# Download Data
+symbols=c("SPY","AGG","GLD","USO")
+getSymbols(symbols,from="2013-02-01",to="2014-01-31",adjust=T)
+etf.close <- do.call(merge,lapply(symbols,function(x) Cl(get(x))))
+x <- na.omit(diff(log(etf.close)))*100
+names(x) <- symbols
+
+# Summary Statistics
+annret <- apply(x[,1:4],2,mean)*252
+annvol <- apply(x[,1:4],2,sd)*sqrt(252) 
+z.skew <- apply(x[,1:4],2,skewness)/sqrt(6/nrow(x))
+z.kurt <- apply(x[,1:4],2,kurtosis)/sqrt(24/nrow(x))
+sumstats <- data.frame("RETURN"=annret,"VOLATILITY"=annvol,"SKEWNESS"=z.skew,"KURTOSIS"=z.kurt,row.names=symbols)
+
+# KDE & QQ Norm Plots
+png(file="kde.png",width=7,height=7,units="in",res=300)
+par(mfrow=c(2,2))
+for(i in 1:length(symbols)) {
+  plot(density(x[,i],bw="SJ"),main=symbols[i],xlab="",col=4)
+  rug(x[,i],col=2)
+}
+dev.off()
+
+png(file="qqnorm.png",width=7,height=7,units="in",res=300)
+par(mfrow=c(2,2))
+for(i in symbols) {
+  chart.QQPlot(x[,i],envelope=0.95,line='robust',col=c(4,2),pch=16)
+}
+dev.off()
+
+####################################################################
+# Fit Marginal Distributions
+####################################################################
+# Bootstrap Function
+mleskt <- function(x,idx) {
+  st.mple(id,x[idx])$dp
+}
+
+tab <- as.data.frame(matrix(0,nrow=3,ncol=4,dimnames=list(symbols[-4],c("xi","omega","alpha","nu"))))
+set.seed(1)
+
+# Fit Each Return Series
+uso <- coredata(x[,4])
+x <- coredata(x[,1:3])
+u <- x
+u[,1:3] <- 0
+idx <- sample(nrow(x),replace=T)
+id <- matrix(1,nrow(x))
+
+for(i in 1:ncol(x)) {
+  return <- boot(x[,i],mleskt,10)
+  med.nu <- round(median(return$t[,4]),0)
+  fit.skt <- st.mple(id,x[,i],fixed.nu=med.nu)
+  tab[i,1:3] <- fit.skt$dp
+  tab[i,4] <- fit.skt$fixed.nu
+  param <- as.numeric(tab[i,1:4])
+  u[,i] <- pst(x[,i],dp=param)
+}
+
+mu.uso <- mean(uso)
+sd.uso <- sd(uso)
+uso.u <- pnorm(uso,mean=mu.uso,sd=sd.uso)
+u <- cbind(u,uso.u)
+x <- cbind(x,uso)
+
+# Plot Uniform Series Scatter Plots
+png(file="unipairs.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+p1 <- splom(x,pch=19,axis.text.cex=.75,col=rgb(0,0,100,50,maxColorValue=255))
+p2 <- splom(u,pch=19,axis.text.cex=.75,col=rgb(0,0,100,50,maxColorValue=255))
+print(p1,position=c(0,0,0.5,1),more=TRUE)
+print(p2,position=c(0.50,0,1,1))
+dev.off()
+
+####################################################################
+# Fit Copulas
+####################################################################
+# Fit Normal Copula
+cor <- cor(x)
+param.cor <- P2p(cor)
+ncop <- normalCopula(param.cor,dim=4,dispstr="un")
+fnorm <- fitCopula(ncop,u,method="ml")
+fnorm.param <- fnorm@estimate
+
+# Fit t Copula
+tcop <- tCopula(param.cor,dim=4,dispstr="un",df=15)
+ft <- fitCopula(tcop,u,method="ml",optim.control=list(maxit=2000))
+
+new.tcop <- tCopula(ft@estimate[1:6],dim=4,dispstr="un",df=round(ft@estimate[7],0),df.fixed=T)
+new.ft <- fitCopula(new.tcop,u,method="ml",optim.control=list(maxit=2000))
+
+# Compare Copulas by AIC
+Model <- c("Normal-Copula","t-Copula")
+results <- data.frame(AIC=rep(0,2),BIC=rep(0,2))
+results[1,1] <- -2*fnorm@loglik+2*length(fnorm@estimate)
+results[1,2] <- -2*fnorm@loglik+log(nrow(x))*length(fnorm@estimate)
+results[2,1] <- -2*new.ft@loglik+2*(length(new.ft@estimate)+length(new.ft@copula@df))
+results[2,2] <- -2*new.ft@loglik+log(nrow(x))*(length(new.ft@estimate)+length(new.ft@copula@df))
+
+results <- cbind(results,Model)
+png(file="aicbic.png",width=9,height=5,units="in",res=300)
+q1 <- dotplot(results[,1]~results[,3],data=results,main="AIC",ylab="",cex=2,grid=T)
+q2 <- dotplot(results[,2]~results[,3],data=results,main="BIC",ylab="",cex=2,grid=T)
+print(q1,position=c(0,0,0.5,1),more=TRUE)
+print(q2,position=c(0.50,0,1,1))
+dev.off()
+
+####################################################################
+# Scenario Probabilities
+####################################################################
+# Multivariate Distribution Object
+mvd <- mvdc(new.tcop,margins=c("st","st","st","norm"),paramMargins=list(list(dp=as.numeric(tab[1,])),list(dp=as.numeric(tab[2,])),list(dp=as.numeric(tab[3,])),list(mu.uso,sd.uso)))
+(pMvdc(rep(0,4),mvd))
+
+# Simulated Daily Asset Returns
+set.seed(2)
+sim <- rMvdc(5000,mvd)/100
+
+# Daily Portfolio Returns
+w <- c(0.6,0.2,0.1,0.1)
+R <- sim %*% w
+
+# Value at Risk
+P <- 1000000
+q1 <- mean(R)
+a <- signif((exp(q1)-1)*P,digits=1)
+
+q2 <- quantile(R,0.05)
+b <- signif(-as.numeric(exp(q2)-1)*P,digits=1)
+
+R.sort <- sort(R)
+na <- mean(R.sort[which(R.sort<q2)])
+c <- signif(-as.numeric(exp(na)-1)*P,digits=2)
