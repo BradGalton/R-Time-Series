@@ -1,0 +1,90 @@
+rm(list=ls())  
+
+library(quantmod)
+library(forecast)
+library(urca)
+
+####################################################################
+# Exploratory Data Analysis
+####################################################################
+# Download Data
+getSymbols("GS30",src="FRED")
+GS30 <- GS30["2006-02::2014-01"]
+GS30.ts <- ts(GS30,start=c(2006,2),end=c(2014,1),frequency=12)
+(tsp(GS30.ts))
+
+# Plot Level Time Series
+png(file="longbond.png",width=7,height=5,units="in",res=300)
+plot(GS30.ts,xlab="",ylab="")
+grid()
+par(new=T)
+plot(GS30.ts,type="l",main="30-Year Treasury Bond Rate",xlab="",ylab="Rate",lwd=2,col=4)
+dev.off()
+
+# Acf and Pacf of Level Series
+png(file="acfpacf-level.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+Acf(GS30.ts,plot=T,main="30-Year Treasury Bond Rate")
+Pacf(GS30.ts,plot=T,main="30-Year Treasury Bond Rate")
+dev.off()
+
+# Unit Root of Level Series
+GS30.tsdf <- ur.df(GS30.ts,type="drift",lags=30,selectlags="BIC")
+
+# Plot Differenced Series
+GS30.diff <- diff(GS30.ts)
+png(file="diffrates.png",width=7,height=5,units="in",res=300)
+plot(GS30.diff,type="h",xlab="",ylab="")
+grid()
+par(new=T)
+plot(GS30.diff,type="h",main="Change in 30 Year Bond Rate",xlab="",ylab=expression(paste(Delta," Rate")),lwd=2,col=4)
+dev.off()
+
+# Acf and Pacf of Differenced Series
+png(file="acfpacf-diff.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+Acf(GS30.diff,plot=T,main="Change in 30-Year Treasury Bond Rate")
+Pacf(GS30.diff,plot=T,main="Change in 30-Year Treasury Bond Rate")
+dev.off()
+
+# Unit Root Tests on Differnced Series
+GS30.diffdf <- ur.df(GS30.diff,type="none",lags=30,selectlags="BIC")
+
+####################################################################
+# Model Fitting and Forecasting
+####################################################################
+# Automatic Model Selection
+GS30.arima <- auto.arima(GS30.ts,ic="bic",max.p=3,max.q=3,max.order=6,seasonal=F,approximation=F,stepwise=F,trace=T)
+
+# Model Diagnostics
+# Acf and Pacf Plots of the Residuals
+png(file="acfpacf-resid.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+Acf(GS30.arima$residuals,plot=T,main="ARIMA Model Residuals")
+Pacf(GS30.arima$residuals,plot=T,main="ARIMA Model Residuals")
+dev.off()
+
+# Multi-lag Box Test
+source(file="multiLagBoxTest.R")
+png(file="mlBoxTest.png",width=7,height=5,units="in",res=300)
+multiLagBoxTest(GS30.arima$residuals,lags=15,fitdf=1,plotit=T)
+dev.off()
+
+# QQ Norm Plot
+png(file="qqnorm.png",width=5,height=5,units="in",res=300)
+qqnorm(as.numeric(GS30.arima$residuals),datax=T,col=4,pch=19)
+qqline(as.numeric(GS30.arima$residuals),datax=T,lwd=2,col=2)
+dev.off()
+
+# Forecasting
+# Predict Function
+GS30.predict <- predict(GS30.arima)
+GS30.l <- GS30.predict$pred[1]-GS30.predict$se[1]*qnorm(0.975)
+GS30.u <- GS30.predict$pred[1]+GS30.predict$se[1]*qnorm(0.975)
+
+# Forecast Function
+GS30.forecast <- forecast(GS30.arima,h=12,fan=T,bootstrap=T)
+png(file="forecast.png",width=7,height=5,units="in",res=300)
+plot(GS30.forecast,ylim=c(0.75,5.75),main="30-Year Bond Rate Forecast",shadecols="oldstyle")
+grid()
+dev.off()
