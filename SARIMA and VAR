@@ -1,0 +1,108 @@
+rm(list=ls())  
+
+library(forecast)
+library(lattice)
+library(urca)
+library(vars)
+
+####################################################################
+# Case-Shiller Indexes
+####################################################################
+# Case-Shiller Data
+cs.df <- read.table("CaseShillerData.csv",header=T,sep=",")
+cs.ts <- ts(cs.df["SEXR"],start=c(2008,11),end=c(2013,11),frequency=12)
+
+png(file="SeattleIndex.png",width=7,height=5,units="in",res=300)
+plot(cs.ts,xlab="",ylab="")
+grid()
+par(new=T)
+plot(cs.ts,main="Case-Shiller Seattle Home Price Index",xlab="",ylab="Index",lwd=2,col=4)
+dev.off()
+
+# Exploratory Time Series Analysis
+# Acf Plots
+cs.diff <- diff(cs.ts)
+cs.seas <- diff(cs.ts,12)
+png(file="acfplots.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+Acf(cs.diff,lag=25,plot=T,main="First Difference")
+Acf(cs.seas,lag=25,plot=T,main="Seasonal Difference")
+dev.off()
+
+cs.sdiff <- diff(diff(cs.ts,12),1)
+png(file="acfpacf.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+Acf(cs.sdiff,plot=T,main="First and Seasonal Difference")
+Pacf(cs.sdiff,plot=T,main="First and Seasonal Difference")
+dev.off()
+
+# Seasonal Decomposition 
+cs.stl <- stl(cs.ts[,1],s.window="periodic")
+png(file="stlplot.png",width=7,height=5,units="in",res=300)
+plot(cs.stl,lwd=2,col=4)
+title("Seattle Home Price Index")
+dev.off()
+
+# SARIMA Model Fitting
+cs.arima <- auto.arima(cs.ts,lambda=0,approximation=F,stepwise=F)
+
+# Model Diagnostics
+# Residual Acf and Pacf Plots
+png(file="resacfpacf.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+Acf(cs.arima$residuals,plot=T,main="Model Residuals")
+Pacf(cs.arima$residuals,plot=T,main="Model Residuals")
+dev.off()
+
+# Box Test
+source(file="multiLagBoxTest.R")
+png(file="mlBoxTest.png",width=7,height=5,units="in",res=300)
+multiLagBoxTest(cs.arima$residuals,lags=cs.arima$arma[5]*2,fitdf=sum(cs.arima$arma[1:4]),plotit=T)
+dev.off()
+
+# Forecast Seattle Home Price Index
+set.seed(1)
+cs.forecast <- forecast(cs.arima,h=12,fan=T,simulate=T,bootstrap=T,npaths=10000)
+png(file="sarimaforecast.png",width=7,height=5,units="in",res=300)
+plot(cs.forecast,include=length(window(cs.ts,start=c(2011,12))),main="Seattle Home Price Index Forecast",col=4,shadecols="oldstyle")
+grid()
+dev.off()
+
+####################################################################
+# US/Canada Exchange Rates
+####################################################################
+# Exchage Rate Data
+uscn.df <- read.table("uscn.csv",header=T,sep=",")
+uscn.mts <- ts(uscn.df,start=c(1976,4),end=c(1996,6),frequency=12)
+
+png(file="uscn.png",width=9,height=5,units="in",res=300)
+plot(xyplot(uscn.mts[,2:3],type=c("l","g"),xlab="",strip=strip.custom(factor.levels=c("1st difference of US/CA spot exchange rate","US/CN interest rate differential")),scales=list(y=list(rot=0))))
+dev.off()
+
+# Model Diagnostics
+# Acf and Pacf Plots of the Residuals
+png(file="acf-uscn.png",width=9,height=5,units="in",res=300)
+par(mfrow=c(1,2))
+Acf(uscn.mts[,2],plot=T,main="dspot")
+Acf(uscn.mts[,3],plot=T,main="fp")
+dev.off()
+
+# Unit Root Test
+uscn.df <- ur.df(uscn.mts[,3],type="drift",lags=30,selectlags="BIC")
+
+# Cross-correlation Plot
+png(file="ccf.png",width=7,height=5,units="in",res=300)
+ccf(uscn.mts[,2],uscn.mts[,3],plot=T,main="Cross-correlation between dspot & fp")
+dev.off()
+
+# Fit VAR Model
+uscn.var <- VAR(uscn.mts[,2:3],ic="SC",lag.max=20)
+
+# VAR model Forecast
+uscn.forecast <- forecast(uscn.var,h=12,level=seq(50,95,by=5))
+uscn.forecast2 <- forecast(uscn.var,level=seq(50,95,by=5))
+png(file="varforecast.png",width=7,height=5,units="in",res=300)
+plot(uscn.forecast2,include=length(window(uscn.mts[,2],start=c(1994,7))),main="Vector Autoregressive Model Forecast")
+dev.off()
+
+uscn.mat <- rbind(uscn.forecast$mean$dspot[1:12],uscn.forecast$mean$fp[1:12])
