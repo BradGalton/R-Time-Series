@@ -1,0 +1,68 @@
+rm(list=ls())  
+
+library(corrplot)
+library(leaps)
+library(MASS)
+library(quantmod)
+
+####################################################################
+# Term Structure of Volatility
+####################################################################
+# Future Price and Futures Expiration Data
+nymex <- read.table("NymexCrude.csv",header=T,sep=",")
+exp <- read.table("expDates.csv",header=T,sep=",")
+
+# Plotting the Futures Curve
+ed <- read.table(file="expDates.csv",sep=",",as.is=T,header=T)
+ex <- as.Date(ed[,"EXPIRATION"])
+dat <- read.zoo(file="NymexCrude.csv", sep=",",as.is=T, header=T, format="%m/%d/%Y")
+N <- nrow(dat)
+
+for(i in 1:N)
+{
+  iDate <- time(dat[i,])
+  raw <- as.numeric(dat[i,])
+  x <- c(0,ex - iDate)[!is.na(raw)]
+  y <- raw[!is.na(raw)]
+  labs <- colnames(dat[i,])[!is.na(raw)]
+  plot(x,y,pch=18,col=4,xlab="calendar days to expiration",ylab="price",xlim=c(0,max(x)*1.1))
+  title(paste("Nymex Crude Oil Futures Curve:",iDate))
+  text(x,y,labs,pos=4,cex=0.5)
+  curv <- smooth.spline(x,y)
+  pred <- predict(curv,x=1:1100)$y
+  lines(x=1:1100,y=pred,col=2)
+}
+
+# Interpolated Price Matrix
+t <- seq(0,1080,90)
+price.mat <- matrix(NA,nrow=500,ncol=13,dimnames=list(nymex[,1],t))
+N <- nrow(price.mat)
+
+for(i in 1:N)
+{
+  iDate <- time(dat[i,])
+  raw <- as.numeric(dat[i,])
+  x <- c(0,ex - iDate)[!is.na(raw)]
+  y <- raw[!is.na(raw)]
+  curv <- smooth.spline(x,y)
+  price.mat[i,] <- predict(curv,t)$y
+}
+
+# Annualized Return Volatility Versus Time
+nymex.ret <- diff(log(price.mat))
+volatility <- apply(nymex.ret,2,sd)*100*sqrt(250)
+
+# Fit Non-linear Model to the Term Structure of Volatility
+vol.df <- data.frame(volatility=volatility,t=t)
+fit1 <- nls(volatility~b0+b1*exp(-t/theta),data=vol.df,start=list(b0=0,b1=.1,theta=300))
+
+pr1 <- predict(fit1)
+png(file="nls.png",width=7,height=5,units="in",res=300)
+plot(t,volatility,pch=18,col=4,main="Nymex Crude Oil Term Structure of Volatility",xlab="days to expiration",ylab="annualized volatility")
+grid()
+lines(t,pr1,col=2,lwd=2)
+dev.off()
+
+# Predict Specific Volatilities
+t.new <- c(60,120,240)
+pr2 <- predict(fit1,newdata=data.frame(t=t.new))
